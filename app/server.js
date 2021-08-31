@@ -33,6 +33,7 @@ import { staticFilesMiddleware } from './api/utils/staticFilesMiddleware';
 import { customUploadsPath, uploadsPath } from './api/files/filesystem';
 import { tocService } from './api/toc_generation/tocService';
 import { permissionsContext } from './api/permissions/permissionsContext';
+// import { TaskManager } from 'api/taskManager/taskManager';
 
 mongoose.Promise = Promise;
 
@@ -113,6 +114,10 @@ DB.connect(config.DBHOST, dbAuth).then(async () => {
 
   const bindAddress = { true: 'localhost' }[process.env.LOCALHOST_ONLY];
   const port = config.PORT;
+  const taskManager = new TaskManager(port);
+  setInterval(() => {
+    taskManager.assignTasksMaster();
+  }, 10000);
 
   http.listen(port, bindAddress, async () => {
     await tenants.run(async () => {
@@ -120,7 +125,10 @@ DB.connect(config.DBHOST, dbAuth).then(async () => {
       if (!config.multiTenant && !config.clusterMode) {
         syncWorker.start();
 
-        const { evidencesVault, features } = await settings.get();
+        const {
+          evidencesVault,
+          features
+        } = await settings.get();
         if (evidencesVault && evidencesVault.token && evidencesVault.template) {
           console.info('==> 📥  evidences vault config detected, started sync ....');
           repeater.start(
@@ -134,7 +142,6 @@ DB.connect(config.DBHOST, dbAuth).then(async () => {
           const service = tocService(features.tocGeneration.url);
           repeater.start(() => service.processNext(), 10000);
         }
-
         repeater.start(
           () =>
             TaskProvider.runAndWait('TopicClassificationSync', 'TopicClassificationSync', {
