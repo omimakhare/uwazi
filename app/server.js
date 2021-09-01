@@ -12,6 +12,7 @@ import { TaskProvider } from 'shared/tasks/tasks';
 
 import { appContextMiddleware } from 'api/utils/appContextMiddleware';
 import { requestIdMiddleware } from 'api/utils/requestIdMiddleware';
+import { Mutex } from 'redis-semaphore';
 import uwaziMessage from '../message';
 import apiRoutes from './api/api';
 import privateInstanceMiddleware from './api/auth/privateInstanceMiddleware';
@@ -33,7 +34,7 @@ import { staticFilesMiddleware } from './api/utils/staticFilesMiddleware';
 import { customUploadsPath, uploadsPath } from './api/files/filesystem';
 import { tocService } from './api/toc_generation/tocService';
 import { permissionsContext } from './api/permissions/permissionsContext';
-// import { TaskManager } from 'api/taskManager/taskManager';
+import { sleep } from 'shared/tsUtils';
 
 mongoose.Promise = Promise;
 
@@ -114,10 +115,37 @@ DB.connect(config.DBHOST, dbAuth).then(async () => {
 
   const bindAddress = { true: 'localhost' }[process.env.LOCALHOST_ONLY];
   const port = config.PORT;
-  const taskManager = new TaskManager(port);
-  setInterval(() => {
-    taskManager.assignTasksMaster();
-  }, 10000);
+  // const taskManager = new TaskManager(port);
+  // setInterval(() => {
+  //   taskManager.assignTasksMaster();
+  // }, 10000);
+
+
+  const Redis = require('ioredis');
+
+// TypeScript
+// import { Mutex } from 'redis-semaphore'
+// import Redis from 'ioredis'
+
+  const redisClient = new Redis();
+
+  async function doSomething(tenant, taskName) {
+    const semaphore = new Mutex(redisClient, `${tenant}_${taskName}`, { lockTimeout: 30300 });
+    await semaphore.acquire();
+    try {
+      await sleep(5000);
+      // execute task!!!
+      console.log('Locked node');
+      console.log(port, new Date().getSeconds());
+      console.log('\n');
+    } finally {
+      await sleep(5000);
+      await semaphore.release();
+      doSomething();
+    }
+  }
+
+  doSomething();
 
   http.listen(port, bindAddress, async () => {
     await tenants.run(async () => {
@@ -125,10 +153,7 @@ DB.connect(config.DBHOST, dbAuth).then(async () => {
       if (!config.multiTenant && !config.clusterMode) {
         syncWorker.start();
 
-        const {
-          evidencesVault,
-          features
-        } = await settings.get();
+        const { evidencesVault, features } = await settings.get();
         if (evidencesVault && evidencesVault.token && evidencesVault.template) {
           console.info('==> 📥  evidences vault config detected, started sync ....');
           repeater.start(
